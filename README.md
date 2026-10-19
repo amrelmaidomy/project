@@ -3,6 +3,17 @@
 تطبيق **Flutter / Android** لتسجيل المواعيد يدويًا أو بالصوت، مع **FastAPI**
 لتحويل الكلام باستخدام Whisper وفهم المواعيد باللهجة المصرية بقواعد واضحة دون LLM.
 
+## تحميل النسخة التجريبية
+
+- [تحميل كود المشروع ZIP](https://github.com/amrelmaidomy/project/releases/download/v0.1.0/ma3ak-source.zip).
+- [تحميل تطبيق Android ARM64 بصيغة APK](https://github.com/amrelmaidomy/project/releases/download/v0.1.0/ma3ak-arm64.apk).
+- [تحميل نفس التطبيق داخل ZIP](https://github.com/amrelmaidomy/project/releases/download/v0.1.0/ma3ak-arm64.zip).
+- [تفاصيل الإصدار وبصمات الملفات](https://github.com/amrelmaidomy/project/releases/tag/v0.1.0).
+
+على اللاب نزّل كود المشروع وشغّل الخادم؛ ثبّت APK على هاتف Android ARM64.
+التطبيق بصيغة Debug للاختبار، مع عنوان الخادم المحلي `127.0.0.1:8000` وربط USB
+كما في الخطوات أدناه. نموذج «يا مساعد» المدرّب غير مرفق.
+
 ## الموجود
 
 - واجهة عربية من اليمين لليسار، إضافة وتعديل وحذف وإكمال التذكيرات.
@@ -130,7 +141,8 @@ docs/         خطة التحقق على جهاز حقيقي وتقييم الم
 scripts/      تشغيل الخادم وتفعيل أدوات البيئة والتحقق
 ```
 
-إعداد GitHub Actions موجود لتشغيل الاختبارات وبناء APK عند رفع المستودع؛ لم يتم
-رفع الكود أو تشغيل CI عن بُعد من هذه الجلسة.
+إعداد GitHub Actions موجود لتشغيل الاختبارات وبناء APK عند رفع المستودع. راجع
+[صفحة Actions](https://github.com/amrelmaidomy/project/actions) لحالة التشغيل عن بُعد؛
+نتائج التحقق المحلي موثقة بصورة مستقلة أدناه.
 
 نتائج التنفيذ الفعلية وحدود ما تم اختباره في [سجل التحقق](docs/validation.md).
