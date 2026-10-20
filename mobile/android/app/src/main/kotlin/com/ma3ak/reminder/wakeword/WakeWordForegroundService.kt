@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import com.ma3ak.reminder.R
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /** Explicit user-started microphone service. Never restarts itself or opens UI. */
 class WakeWordForegroundService : Service() {
@@ -22,10 +23,11 @@ class WakeWordForegroundService : Service() {
         private const val NOTIFICATION_ID = 2147483646
     }
     private val commands = Executors.newSingleThreadExecutor()
-    private var engine: OpenWakeWordEngine? = null
+    private var engine: AutoCloseable? = null
     @Volatile private var enabled = false
-    private var profile = "ya_mosaed"
-    private var phrase = "يا مساعد"
+    private var profile = "ya_rafiq"
+    private var phrase = "يا رفيق"
+    private var baseUrl = "http://127.0.0.1:8000"
     private var captureGeneration = 0
     private var foregroundError: String? = null
 
@@ -37,7 +39,7 @@ class WakeWordForegroundService : Service() {
             description = "إشعار دائم أثناء تشغيل الاستماع الاختياري لكلمة التنبيه"
             setSound(null, null)
         })
-        val notification = notification("بجهّز نموذج كلمة التنبيه…")
+        val notification = notification("بجهّز الاستماع والرد الصوتي…")
         try {
             if (Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             else startForeground(NOTIFICATION_ID, notification)
@@ -56,7 +58,8 @@ class WakeWordForegroundService : Service() {
             return START_NOT_STICKY
         }
         when (intent?.action) {
-            START -> submit("start", intent.getStringExtra("profile") ?: "ya_mosaed", id)
+            START -> submit("start", intent.getStringExtra("profile") ?: "ya_rafiq", id,
+                intent.getStringExtra("baseUrl") ?: "http://127.0.0.1:8000")
             STOP -> submit("stop", profile, id)
         }
         return START_NOT_STICKY
@@ -64,13 +67,23 @@ class WakeWordForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    internal fun submit(command: String, requestedProfile: String = profile, requestId: Int = 0) {
+    /** A late engine callback after explicit teardown must not crash its thread. */
+    private fun callback(action: () -> Unit) {
+        try { commands.execute { action() } }
+        catch (error: RejectedExecutionException) {
+            if (!commands.isShutdown) throw error
+        }
+    }
+
+    internal fun submit(command: String, requestedProfile: String = profile, requestId: Int = 0,
+                        requestedBaseUrl: String = baseUrl) {
         commands.execute {
             try {
                 when (command) {
                     "start" -> {
                         closeEngine()
                         profile = requestedProfile
+                        baseUrl = requestedBaseUrl
                         enabled = true
                         WakeWordRuntime.publish(mapOf("profile" to profile, "enabled" to true,
                             "state" to "loading", "listening" to false, "pendingDetection" to false, "type" to "status"))
@@ -109,12 +122,29 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun listen() {
+        if (profile == "ya_rafiq") {
+            phrase = "يا رفيق"
+            val generation = ++captureGeneration
+            val created = RafiqVoiceEngine(this, baseUrl,
+                onStatus = { state, message -> callback {
+                    if (enabled && generation == captureGeneration) update(state, message)
+                } },
+                onFailure = { error -> callback {
+                    if (enabled && generation == captureGeneration) failCapture(error)
+                } })
+            engine = created
+            try { created.start() } catch (error: Exception) {
+                closeEngine()
+                throw error
+            }
+            return
+        }
         val bundle = WakeWordModels.load(this, profile)
         phrase = bundle.phrase
         val generation = ++captureGeneration
         val created = OpenWakeWordEngine(this, bundle,
-            onDetected = { score -> commands.execute {
-                if (!enabled || generation != captureGeneration) return@execute
+            onDetected = { score -> callback {
+                if (!enabled || generation != captureGeneration) return@callback
                 try {
                     closeEngine()
                     update("detected", "سمعت «$phrase». افتح التطبيق عشان تقول موعدك.")
@@ -122,7 +152,7 @@ class WakeWordForegroundService : Service() {
                         "pendingDetection" to true, "listening" to false))
                 } catch (error: Exception) { failCapture(error) }
             } },
-            onFailure = { error -> commands.execute {
+            onFailure = { error -> callback {
                 if (enabled && generation == captureGeneration) failCapture(error)
             } })
         engine = created
@@ -170,8 +200,11 @@ class WakeWordForegroundService : Service() {
     override fun onDestroy() {
         WakeWordRuntime.service = null
         enabled = false
+        // Keep a fatal permission/TTS/microphone failure visible after stopSelf.
+        // A deliberate stop already changed the snapshot to "disabled".
+        val finalState = if (WakeWordRuntime.state()["state"] == "error") "error" else "disabled"
         WakeWordRuntime.publish(mapOf("type" to "status", "enabled" to false, "listening" to false,
-            "state" to "disabled", "pendingDetection" to false))
+            "state" to finalState, "pendingDetection" to false))
         commands.execute { try { closeEngine() } finally { commands.shutdown() } }
         super.onDestroy()
     }

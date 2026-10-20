@@ -15,9 +15,9 @@ internal object WakeWordRuntime {
     private val ids = AtomicInteger()
     @Volatile private var snapshot: Map<String, Any?> = mapOf(
         "type" to "status", "state" to "disabled", "enabled" to false,
-        "listening" to false, "profile" to "ya_mosaed", "phrase" to "يا مساعد",
+        "listening" to false, "profile" to "ya_rafiq", "phrase" to "يا رفيق",
         "pendingDetection" to false,
-        "message" to "التنبيه بالكلمة مقفول. نموذج يا مساعد المدرّب مش مرفق بالتطبيق.",
+        "message" to "يا رفيق مقفول. شغّله من شاشة المساعد للاستماع والرد في الخلفية عبر خادمك.",
     )
 
     fun state(): Map<String, Any?> = snapshot.toMap()

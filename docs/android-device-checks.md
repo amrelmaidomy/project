@@ -44,3 +44,17 @@ Use one Android 8/API 26 device or emulator for the minimum supported version, A
 - [ ] App backup remains disabled and no server/API secrets appear in the packaged application or logs.
 
 Record device model, Android version, build ID, app version, permission state, timezone, and observed result for each failed or environment-dependent check. Keep recordings and task text out of public test logs.
+
+## Rafiq background voice (manual checks; not yet verified on a phone)
+
+- [ ] Update the previous APK with the same key; existing reminders remain.
+- [ ] Enable «تشغيل يا رفيق» while the app is visible. Missing notification, exact alarm or microphone permissions are resolved before listening.
+- [ ] With laptop backend and USB reverse active, say «يا رفيق»: an audible Arabic reply is heard. «يا مساعد», «رفيق» alone, ordinary conversation and silence do not trigger a reply.
+- [ ] Repeat with Home pressed, screen locked, and app task swiped away; record the actual Samsung/Android behavior separately.
+- [ ] Give a complete reminder, hear event and reminder timestamps, say «تأكيد» or «أيوه احفظ»: one reminder is saved and appears on reopening the UI, and its exact notification fires.
+- [ ] Give incomplete/ambiguous times, answer clarifying questions, correct the preview, and confirm the new preview. No old preview is saved.
+- [ ] «إلغاء», «لا تحفظ», silence and generic «تمام» do not save a reminder.
+- [ ] Stop during recording, upload and TTS using notification «إيقاف»: microphone indicator and audio end, and delayed callbacks never restart listening.
+- [ ] Disable the backend/disconnect USB, revoke alarm access, and remove Arabic TTS: failures are visible and active-conversation failures audible; no false saved confirmation.
+- [ ] Restore backend/USB reverse, retry, then force-stop or reboot: listening stays off until explicitly enabled again.
+- [ ] Test silence, fan, television, short and long speech, distance, and battery drain; do not infer recognition accuracy from builds/unit tests.

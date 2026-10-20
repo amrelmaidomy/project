@@ -6,6 +6,7 @@ import 'package:intl/intl.dart' show DateFormat;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../core/app_exception.dart';
+import '../../core/providers.dart';
 import '../wake_word/wake_word_service.dart';
 import 'assistant_controller.dart';
 import 'conversation_state.dart';
@@ -132,9 +133,9 @@ class _AssistantScreenState extends ConsumerState<AssistantScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const _WakeWordCard(),
+                    const SizedBox(height: 24),
                     if (state.messages.isEmpty) ...[
-                      const _WakeWordCard(),
-                      const SizedBox(height: 24),
                       const Text(
                         'قول لي،\nأفكّرك بإيه؟',
                         style: TextStyle(
@@ -397,7 +398,7 @@ class _WakeWordCardState extends ConsumerState<_WakeWordCard> {
     }
   }
 
-  Future<void> _toggle(bool enable, {String profile = 'ya_mosaed'}) async {
+  Future<void> _toggle(bool enable, {String profile = 'ya_rafiq'}) async {
     if (_busy) return;
     setState(() {
       _busy = true;
@@ -406,6 +407,12 @@ class _WakeWordCardState extends ConsumerState<_WakeWordCard> {
     try {
       final service = ref.read(wakeWordServiceProvider);
       if (enable) {
+        // Permission dialogs require a visible Activity. The headless save path
+        // checks these permissions again but never attempts to request them.
+        if (profile == 'ya_rafiq') {
+          await ref.read(notificationServiceProvider).ensureCanSchedule();
+          if (!mounted) return;
+        }
         await service.start(profile: profile);
       } else {
         await service.stop();
@@ -435,15 +442,7 @@ class _WakeWordCardState extends ConsumerState<_WakeWordCard> {
       builder: (context, _) {
         final status = service.status;
         final demo = status.enabled && status.profile == 'hey_jarvis';
-        final title = demo ? 'استماع تجريبي: Hey Jarvis' : 'ناديني «يا مساعد»';
-        final description = status.enabled
-            ? status.listening
-                  ? 'الاستماع شغّال مع إشعار دائم. تقدر توقفه في أي وقت.'
-                  : 'الاستماع متوقف مؤقتًا أثناء المحادثة.'
-            : status.available
-            ? 'فعّل الاستماع بالميكروفون مع إشعار دائم علشان تناديني بصوتك.'
-            : 'عبارة «يا مساعد» محتاجة نموذج صوتي مخصص قبل التفعيل. '
-                  'تقدر تستخدم زر الميكروفون دلوقتي.';
+        final title = demo ? 'استماع تجريبي: Hey Jarvis' : 'ناديني «يا رفيق»';
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
           decoration: BoxDecoration(
@@ -475,26 +474,58 @@ class _WakeWordCardState extends ConsumerState<_WakeWordCard> {
                       width: 22,
                       height: 22,
                       child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Switch.adaptive(
-                      value: status.enabled,
-                      onChanged:
-                          !conversationBusy &&
-                              (status.available || status.enabled)
-                          ? (value) => _toggle(value)
-                          : null,
                     ),
                 ],
               ),
               Text(
-                description,
+                status.enabled || status.state == 'error'
+                    ? status.message
+                    : 'قول «يا رفيق»، واستنى الرد، وبعدها قول موعدك. '
+                          'هسألك عن التفاصيل وأحفظه بعد ما تقول «تأكيد».',
                 style: const TextStyle(
                   fontSize: 12,
                   height: 1.8,
                   color: Color(0xff607165),
                 ),
               ),
+              if (!demo) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'أثناء التشغيل، الميكروفون يلتقط الكلام القريب ويبعت المقاطع '
+                  'الصوتية لخادمك على اللاب. خلي الخادم شغّال وUSB متوصل. '
+                  'تقدر تروح للشاشة الرئيسية أو تقفل شاشة الموبايل؛ '
+                  'الاستماع يفضل شغّال بإشعار دائم وزر إيقاف. '
+                  'بعد إعادة تشغيل الهاتف أو الإيقاف الإجباري، فعّله من هنا تاني.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.8,
+                    color: Color(0xff607165),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed:
+                    _busy ||
+                        (!status.enabled &&
+                            (conversationBusy || !status.available))
+                    ? null
+                    : () => _toggle(!status.enabled),
+                icon: Icon(
+                  status.enabled ? Icons.stop_rounded : Icons.hearing_rounded,
+                ),
+                label: Text(
+                  status.enabled ? 'إيقاف الاستماع' : 'تشغيل يا رفيق',
+                ),
+              ),
+              if (!status.enabled && !status.available)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    status.message,
+                    style: const TextStyle(fontSize: 12, height: 1.7),
+                  ),
+                ),
               if (!status.enabled && status.demoAvailable)
                 Align(
                   alignment: AlignmentDirectional.centerStart,

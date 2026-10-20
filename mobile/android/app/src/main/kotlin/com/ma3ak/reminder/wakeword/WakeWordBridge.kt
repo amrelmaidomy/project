@@ -16,8 +16,10 @@ class WakeWordBridge(private val activity: FlutterActivity, messenger: BinaryMes
     private val events = EventChannel(messenger, "com.ma3ak.reminder/wake_word/events")
     private var sink: EventChannel.EventSink? = null
     private val pending = mutableSetOf<Int>()
+    private fun availability(): Map<String, Any> = WakeWordModels.availability(activity) +
+        mapOf("available" to true)
     private val listener: (Map<String, Any?>) -> Unit = { event ->
-        sink?.success(event + WakeWordModels.availability(activity))
+        sink?.success(event + availability())
     }
 
     init {
@@ -26,7 +28,7 @@ class WakeWordBridge(private val activity: FlutterActivity, messenger: BinaryMes
             override fun onListen(arguments: Any?, eventSink: EventChannel.EventSink) {
                 sink = eventSink
                 WakeWordRuntime.listen(listener)
-                eventSink.success(WakeWordRuntime.state() + WakeWordModels.availability(activity))
+                eventSink.success(WakeWordRuntime.state() + availability())
             }
             override fun onCancel(arguments: Any?) { sink = null; WakeWordRuntime.unlisten(listener) }
         })
@@ -34,7 +36,7 @@ class WakeWordBridge(private val activity: FlutterActivity, messenger: BinaryMes
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         if (call.method == "status") {
-            result.success(WakeWordRuntime.state() + WakeWordModels.availability(activity)); return
+            result.success(WakeWordRuntime.state() + availability()); return
         }
         if (call.method !in setOf("start", "stop", "pause", "resume", "acknowledgeDetection")) {
             result.notImplemented(); return
@@ -45,18 +47,24 @@ class WakeWordBridge(private val activity: FlutterActivity, messenger: BinaryMes
                 (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) {
                 result.error("permission_required", "اسمح بالميكروفون والإشعارات قبل تشغيل كلمة التنبيه.", null); return
             }
-            val profile = call.argument<String>("profile") ?: "ya_mosaed"
-            if (profile !in setOf("ya_mosaed", "hey_jarvis")) { result.error("invalid_profile", "Unknown wake profile.", null); return }
+            val profile = call.argument<String>("profile") ?: "ya_rafiq"
+            if (profile !in setOf("ya_rafiq", "ya_mosaed", "hey_jarvis")) { result.error("invalid_profile", "Unknown wake profile.", null); return }
             val available = WakeWordModels.availability(activity)
-            if (available[if (profile == "ya_mosaed") "available" else "demoAvailable"] != true) {
+            if (profile != "ya_rafiq" && available[if (profile == "ya_mosaed") "available" else "demoAvailable"] != true) {
                 result.error("model_missing", if (profile == "ya_mosaed")
                     "نموذج يا مساعد المدرّب غير مرفق. راجع docs/wake-word.md."
                     else "نزّل أصول Hey Jarvis التجريبية بالسكريبت الموثّق أولًا.", null); return
             }
             val id = request(result)
             try {
+                val baseUrl = call.argument<String>("baseUrl") ?: "http://127.0.0.1:8000"
+                if (profile == "ya_rafiq") {
+                    // Validate before acknowledging an enabled service or touching its microphone.
+                    RafiqApi(baseUrl).close()
+                }
                 activity.startForegroundService(Intent(activity, WakeWordForegroundService::class.java)
-                    .setAction(WakeWordForegroundService.START).putExtra("requestId", id).putExtra("profile", profile))
+                    .setAction(WakeWordForegroundService.START).putExtra("requestId", id)
+                    .putExtra("profile", profile).putExtra("baseUrl", baseUrl))
             } catch (error: Exception) {
                 WakeWordRuntime.abandon(id); pending.remove(id)
                 result.error("start_failed", error.message, null)
@@ -65,7 +73,7 @@ class WakeWordBridge(private val activity: FlutterActivity, messenger: BinaryMes
         }
         val service = WakeWordRuntime.service
         if (service == null) {
-            result.success(WakeWordRuntime.state() + WakeWordModels.availability(activity)); return
+            result.success(WakeWordRuntime.state() + availability()); return
         }
         service.submit(call.method, requestId = request(result))
     }
@@ -75,7 +83,7 @@ class WakeWordBridge(private val activity: FlutterActivity, messenger: BinaryMes
         id = WakeWordRuntime.register { response ->
             pending.remove(id)
             if (response["ok"] == false) result.error("wake_failed", response["message"] as? String, null)
-            else result.success(response + WakeWordModels.availability(activity))
+            else result.success(response + availability())
         }
         pending.add(id)
         return id

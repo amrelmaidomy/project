@@ -1,7 +1,9 @@
+import 'package:arabic_voice_reminder/core/app_exception.dart';
 import 'package:arabic_voice_reminder/core/providers.dart';
 import 'package:arabic_voice_reminder/features/reminders/database/app_database.dart';
 import 'package:arabic_voice_reminder/features/reminders/models/reminder.dart';
 import 'package:arabic_voice_reminder/features/reminders/services/notification_service.dart';
+import 'package:arabic_voice_reminder/features/wake_word/wake_word_service.dart';
 import 'package:arabic_voice_reminder/main.dart';
 import 'package:arabic_voice_reminder/services/recorder_service.dart';
 import 'package:arabic_voice_reminder/services/tts_service.dart';
@@ -13,14 +15,37 @@ import 'package:flutter_test/flutter_test.dart';
 
 class _Notifications extends NotificationService {
   final scheduled = <Reminder>[];
+  int permissionChecks = 0;
   @override
   Future<void> initialize() async {}
   @override
-  Future<void> ensureCanSchedule({bool requestPermissions = true}) async {}
+  Future<void> ensureCanSchedule({bool requestPermissions = true}) async {
+    permissionChecks++;
+  }
+
   @override
   Future<void> schedule(Reminder reminder) async => scheduled.add(reminder);
   @override
   Future<void> cancel(int id) async {}
+}
+
+class _BlockedNotifications extends _Notifications {
+  @override
+  Future<void> ensureCanSchedule({bool requestPermissions = true}) async {
+    permissionChecks++;
+    throw const AppException('فعّل المنبّهات والتذكيرات الأول.');
+  }
+}
+
+class _Wake extends WakeWordService {
+  int starts = 0;
+
+  @override
+  WakeWordStatus get status => const WakeWordStatus(available: true);
+  @override
+  Future<void> refresh() async {}
+  @override
+  Future<void> start({String profile = 'ya_rafiq'}) async => starts++;
 }
 
 class _Tts extends TtsService {
@@ -43,8 +68,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const wakeMethods = MethodChannel('com.ma3ak.reminder/wake_word');
   const wakeEvents = MethodChannel('com.ma3ak.reminder/wake_word/events');
-  // Android host integration is covered separately; these tests exercise form
-  // persistence with an honestly unavailable optional wake model.
+  // Android host integration is covered separately; form tests do not start a
+  // real microphone foreground service.
   setUp(() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -141,6 +166,38 @@ void main() {
     expect(find.text('اكتب اسم الحدث'), findsOneWidget);
     expect(await database.allReminders(), isEmpty);
     expect(notifications.scheduled, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('background voice needs alarm permissions before enabling mic', (
+    tester,
+  ) async {
+    final database = AppDatabase(NativeDatabase.memory());
+    final wake = _Wake();
+    addTearDown(database.close);
+    addTearDown(wake.dispose);
+    final notifications = _BlockedNotifications();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          notificationServiceProvider.overrideWithValue(notifications),
+          wakeWordServiceProvider.overrideWithValue(wake),
+          ttsServiceProvider.overrideWithValue(_Tts()),
+          recorderServiceProvider.overrideWithValue(_Recorder()),
+        ],
+        child: const ReminderApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('المساعد'));
+    await tester.pumpAndSettle();
+    expect(find.text('ناديني «يا رفيق»'), findsOneWidget);
+    await tester.tap(find.text('تشغيل يا رفيق'));
+    await tester.pumpAndSettle();
+    expect(notifications.permissionChecks, 1);
+    expect(wake.starts, 0);
+    expect(find.text('فعّل المنبّهات والتذكيرات الأول.'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

@@ -10,11 +10,15 @@ import 'features/assistant/assistant_screen.dart';
 import 'features/assistant/conversation_state.dart';
 import 'features/reminders/screens/reminders_screen.dart';
 import 'features/wake_word/wake_word_service.dart';
+import 'features/wake_word/background_reminders.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProviderScope(child: ReminderApp()));
 }
+
+@pragma('vm:entry-point')
+void rafiqBackgroundMain() => startRafiqBackground();
 
 class ReminderApp extends StatelessWidget {
   const ReminderApp({super.key});
@@ -73,6 +77,15 @@ class _HomeShellState extends ConsumerState<HomeShell>
   int _tab = 0;
   String? _startupError;
   StreamSubscription<WakeWordDetection>? _wakeSubscription;
+  late final WakeWordService _wake;
+  int _reminderRevision = 0;
+
+  void _onWakeStatus() {
+    final revision = ref.read(wakeWordServiceProvider).status.reminderRevision;
+    if (revision == _reminderRevision) return;
+    _reminderRevision = revision;
+    ref.invalidate(remindersProvider);
+  }
 
   void _selectTab(int value) {
     if (_tab == 1 && value != 1) {
@@ -91,6 +104,8 @@ class _HomeShellState extends ConsumerState<HomeShell>
     WidgetsBinding.instance.addObserver(this);
     _restoreSchedules();
     final wake = ref.read(wakeWordServiceProvider);
+    _wake = wake;
+    wake.addListener(_onWakeStatus);
     _wakeSubscription = wake.detections.listen((_) {
       if (!mounted ||
           !wake.status.enabled ||
@@ -110,13 +125,17 @@ class _HomeShellState extends ConsumerState<HomeShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _wake.removeListener(_onWakeStatus);
     unawaited(_wakeSubscription?.cancel());
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _restoreSchedules();
+    if (state == AppLifecycleState.resumed) {
+      ref.invalidate(remindersProvider);
+      _restoreSchedules();
+    }
   }
 
   Future<void> _restoreSchedules() async {

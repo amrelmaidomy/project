@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/api_client.dart';
 import '../../core/app_exception.dart';
 
 final wakeWordServiceProvider = Provider<WakeWordService>((ref) {
@@ -20,11 +21,11 @@ class WakeWordStatus {
     this.demoAvailable = false,
     this.enabled = false,
     this.listening = false,
-    this.profile = 'ya_mosaed',
-    this.state = 'unavailable',
-    this.message =
-        'نموذج «يا مساعد» المدرّب غير مرفق. استخدم زر الميكروفون دلوقتي.',
+    this.profile = 'ya_rafiq',
+    this.state = 'disabled',
+    this.message = 'شغّل «يا رفيق» علشان تسمع الرد وتضيف تذكير بصوتك.',
     this.pendingDetection = false,
+    this.reminderRevision = 0,
   });
 
   final bool available;
@@ -35,6 +36,7 @@ class WakeWordStatus {
   final String state;
   final String message;
   final bool pendingDetection;
+  final int reminderRevision;
 
   factory WakeWordStatus.fromMap(Map<Object?, Object?> data) => WakeWordStatus(
     available: data['available'] == true,
@@ -43,10 +45,13 @@ class WakeWordStatus {
     listening: data['listening'] == true,
     profile: data['profile'] is String
         ? data['profile']! as String
-        : 'ya_mosaed',
+        : 'ya_rafiq',
     state: data['state'] is String ? data['state']! as String : 'unavailable',
     message: data['message'] is String ? data['message']! as String : '',
     pendingDetection: data['pendingDetection'] == true,
+    reminderRevision: data['reminderRevision'] is int
+        ? data['reminderRevision']! as int
+        : 0,
   );
 }
 
@@ -61,8 +66,8 @@ class WakeWordDetection {
   final double score;
 }
 
-/// Native detection is opt-in. A background hit waits for the UI to resume;
-/// this class never launches an Android Activity from the background.
+/// The opted-in Arabic conversation is owned by the native foreground service.
+/// Only the separate ONNX demo delivers detections to Flutter after UI resume.
 class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
   WakeWordService() {
     _detections = StreamController<WakeWordDetection>.broadcast(
@@ -135,22 +140,22 @@ class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
     }
   });
 
-  Future<void> start({String profile = 'ya_mosaed'}) => _serialized(() async {
+  Future<void> start({String profile = 'ya_rafiq'}) => _serialized(() async {
     if (!_foreground) {
       throw const AppException('افتح التطبيق قبل تشغيل ميكروفون كلمة التنبيه.');
     }
-    if (!const ['ya_mosaed', 'hey_jarvis'].contains(profile)) {
+    if (!const ['ya_rafiq', 'hey_jarvis'].contains(profile)) {
       throw ArgumentError.value(profile, 'profile');
     }
-    // Check readiness before requesting permissions: absent models never
-    // produce a misleading listening toggle or an unnecessary prompt.
+    // Check native readiness before requesting microphone permission. Arabic
+    // recognition uses the user's backend; the optional demo needs ONNX assets.
     try {
       await _call('status');
-      if (!(profile == 'ya_mosaed'
+      if (!(profile == 'ya_rafiq'
           ? _status.available
           : _status.demoAvailable)) {
         throw const AppException(
-          'النموذج المطلوب مش مثبت. راجع docs/wake-word.md واستخدم الزر حاليًا.',
+          'الاستماع المطلوب مش متاح في النسخة دي. استخدم زر الميكروفون حاليًا.',
         );
       }
       final microphone = await Permission.microphone.request();
@@ -165,7 +170,7 @@ class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
           'اسمح بالإشعارات عشان يظهر إشعار الميكروفون وزر الإيقاف.',
         );
       }
-      await _call('start', {'profile': profile});
+      await _call('start', {'profile': profile, 'baseUrl': ApiConfig.baseUrl});
     } on PlatformException catch (error) {
       throw AppException(error.message ?? 'تعذّر تشغيل كلمة التنبيه.');
     } on MissingPluginException {
@@ -216,13 +221,15 @@ class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
   void _apply(Map<Object?, Object?> data) {
     if (_disposed) return;
     _status = WakeWordStatus.fromMap(data);
-    if (!_status.enabled && !_status.pendingDetection) {
+    if (_status.profile == 'ya_rafiq' ||
+        (!_status.enabled && !_status.pendingDetection)) {
       _pending = null;
       _pendingId = null;
     }
     final score = data['score'];
     final detectionId = data['detectionId'];
-    if (_status.pendingDetection &&
+    if (_status.profile != 'ya_rafiq' &&
+        _status.pendingDetection &&
         detectionId is int &&
         detectionId != _pendingId &&
         detectionId != _deliveringId &&
@@ -247,6 +254,7 @@ class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
   void _deliverPending() {
     if (_disposed ||
         !_foreground ||
+        _status.profile == 'ya_rafiq' ||
         !_detections.hasListener ||
         _pending == null ||
         _delivering) {
@@ -263,15 +271,22 @@ class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
       _serialized(() async {
         try {
           await _call('acknowledgeDetection');
-          if (!_disposed && _foreground && _status.enabled) {
+          if (!_disposed &&
+              _foreground &&
+              _status.enabled &&
+              _status.profile == detection.profile) {
             _lastDeliveredId = detectionId;
             _detections.add(detection);
-          } else if (!_disposed && _status.enabled) {
+          } else if (!_disposed &&
+              _status.enabled &&
+              _status.profile == detection.profile) {
             _pending = detection;
             _pendingId = detectionId;
           }
         } catch (_) {
-          if (!_disposed && _status.enabled) {
+          if (!_disposed &&
+              _status.enabled &&
+              _status.profile == detection.profile) {
             _pending = detection;
             _pendingId = detectionId;
           }
@@ -286,9 +301,10 @@ class WakeWordService extends ChangeNotifier with WidgetsBindingObserver {
   void _unavailable(Object? error) {
     if (_disposed) return;
     _status = WakeWordStatus(
+      state: 'unavailable',
       message: error is PlatformException
           ? error.message ?? 'خدمة كلمة التنبيه غير متاحة.'
-          : 'كلمة التنبيه تحتاج Android ونماذج ONNX المثبتة. زر الميكروفون متاح.',
+          : 'الاستماع في الخلفية متاح على Android. تقدر تستخدم زر الميكروفون.',
     );
     _pending = null;
     _pendingId = null;
