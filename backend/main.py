@@ -5,25 +5,41 @@ from __future__ import annotations
 import os
 import tempfile
 import wave
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import Response
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from models.reminder_schema import ParseReminderRequest, ParseReminderResponse
 from parser.reminder_parser import parse_reminder
+from services.habibi_service import HabibiService, InvalidTtsTextError, TtsUnavailableError
 from services.whisper_service import (
     InvalidAudioError,
     SpeechUnavailableError,
     WhisperService,
 )
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    try:
+        yield
+    finally:
+        global _tts_service
+        if _tts_service is not None:
+            await run_in_threadpool(_tts_service.close)
+            _tts_service = None
+
+
 app = FastAPI(
-    title="يا مساعد — Arabic Voice Reminder",
-    version="1.0.0",
-    description="Arabic reminder parsing and locally hosted Whisper transcription.",
+    title="معاك — رفيق المواعيد",
+    version="1.2.0",
+    description="Arabic reminders with local Whisper large-v3-turbo and Habibi Egyptian TTS.",
+    lifespan=lifespan,
 )
 
 _origins = [value.strip() for value in os.getenv("CORS_ORIGINS", "").split(",") if value.strip()]
@@ -41,6 +57,7 @@ if MAX_AUDIO_BYTES <= 0 or MAX_AUDIO_SECONDS <= 0:
     raise ValueError("Audio size and duration limits must be positive")
 
 _speech_service: WhisperService | None = None
+_tts_service: HabibiService | None = None
 
 
 def get_speech_service() -> WhisperService:
@@ -50,14 +67,51 @@ def get_speech_service() -> WhisperService:
     return _speech_service
 
 
+def get_tts_service() -> HabibiService:
+    global _tts_service
+    if _tts_service is None:
+        _tts_service = HabibiService()
+    return _tts_service
+
+
 class TranscribeResponse(BaseModel):
     text: str
 
 
+class SynthesizeRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
+
+    @field_validator("text")
+    @classmethod
+    def nonblank_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("اكتب النص المطلوب تحويله لصوت.")
+        return value
+
+
 @app.get("/health")
-def health(speech: WhisperService = Depends(get_speech_service)) -> dict:
+def health(
+    speech: WhisperService = Depends(get_speech_service),
+    tts: HabibiService = Depends(get_tts_service),
+) -> dict:
     """API readiness is independent from the optional lazy speech model."""
-    return {"status": "ok", "speech": speech.health()}
+    return {"status": "ok", "speech": speech.health(), "tts": tts.health()}
+
+
+@app.post("/synthesize", response_class=Response)
+async def synthesize(
+    request: SynthesizeRequest,
+    tts: HabibiService = Depends(get_tts_service),
+) -> Response:
+    """Return real Habibi Egyptian PCM WAV; never substitute a device voice."""
+    try:
+        audio = await run_in_threadpool(tts.synthesize, request.text)
+    except InvalidTtsTextError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TtsUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/parse-reminder", response_model=ParseReminderResponse)

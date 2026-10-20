@@ -186,7 +186,7 @@ object RafiqPhrases {
         // Preserve date/time punctuation in the remainder forwarded to the
         // existing parser, while allowing punctuation between the two words.
         val canonical = canonical(text).trim()
-        val match = Regex("^[\\p{P}\\p{S}\\s]*يا[\\p{P}\\p{S}\\s]+رفيق(?=[\\p{P}\\p{S}\\s]|$)").find(canonical)
+        val match = Regex("^[\\p{P}\\p{S}\\s]*يا[\\p{P}\\p{S}\\s]*رفيق(?=[\\p{P}\\p{S}\\s]|$)").find(canonical)
             ?: return null
         val remainder = canonical.substring(match.range.last + 1)
             .trimStart { it.isWhitespace() || (!it.isLetterOrDigit() && it !in "-+/") }

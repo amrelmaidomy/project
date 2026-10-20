@@ -25,13 +25,18 @@ class RafiqConversationTest {
         put("question", JSONObject.NULL)
     }
 
+    @Test fun joinedWakeSpellingIsAcceptedWithoutFuzzyNames() {
+        assertEquals("", RafiqPhrases.commandAfterWake("يارفيق"))
+        assertEquals(null, RafiqPhrases.commandAfterWake("يا رفيقي"))
+    }
+
     @Test fun `only complete exact wake phrase starts a session`() {
         val conversation = RafiqConversation({ _, _ -> error("No parse expected") }, { error("No save expected") })
-        for (text in listOf("رفيق", "يا مساعد", "يا رفيقي", "اسم صاحبي يا رفيق", "يا رفيقنا", "يارفيق")) {
+        for (text in listOf("رفيق", "يا مساعد", "يا رفيقي", "اسم صاحبي يا رفيق", "يا رفيقنا")) {
             assertFalse("Unexpected wake from $text", conversation.receive(text).handled)
             assertFalse(conversation.awaitingInput)
         }
-        for (text in listOf("«يَا، رَفِيق!»", "«يا رفيق»", "\"يا رفيق\"", "يا رفيق؟")) {
+        for (text in listOf("«يَا، رَفِيق!»", "«يا رفيق»", "\"يا رفيق\"", "يا رفيق؟", "يارفيق")) {
             val reply = conversation.receive(text)
             assertTrue(reply.handled)
             assertTrue(reply.reply!!.contains("أيوه"))

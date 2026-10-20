@@ -43,7 +43,7 @@ final sttServiceProvider = Provider<SttService>(
 );
 
 final ttsServiceProvider = Provider<TtsService>((ref) {
-  final tts = TtsService();
+  final tts = TtsService(dio: ref.watch(apiClientProvider));
   ref.onDispose(() => unawaited(tts.dispose()));
   return tts;
 });

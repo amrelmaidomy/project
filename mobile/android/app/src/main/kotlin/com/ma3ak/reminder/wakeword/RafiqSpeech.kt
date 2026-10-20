@@ -4,136 +4,132 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import java.util.Locale
-import java.util.UUID
+import java.io.File
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 
-/** Audible background replies, independent of Flutter and a visible Activity. */
-internal class RafiqSpeech(private val context: Context) : AutoCloseable {
+/** Habibi WAV playback survives Activity detach and never uses an Android TTS voice. */
+internal class RafiqSpeech(private val context: Context, private val api: RafiqApi) : AutoCloseable {
     private val main = Handler(Looper.getMainLooper())
     private val audioManager = context.getSystemService(AudioManager::class.java)
-    private val ready = CompletableFuture<Unit>()
     private val lock = Any()
     @Volatile private var closed = false
-    @Volatile private var tts: TextToSpeech? = null
-    private var utteranceId: String? = null
-    private var completion: CompletableFuture<Unit>? = null
+    private var generation = 0L
+    private var current: Playback? = null
 
-    init {
-        main.post {
-            if (closed) return@post
-            tts = TextToSpeech(context.applicationContext) { status ->
-                // Some engines invoke init before the constructor assignment is visible.
-                main.post { finishInitialization(status) }
-            }
-        }
+    private class Playback(val file: File, val done: CompletableFuture<Unit>) {
+        var player: MediaPlayer? = null
+        var focus: AudioFocusRequest? = null
+        var released = false
+        val cleanup = CompletableFuture<Unit>()
     }
 
-    private fun finishInitialization(status: Int) {
-        if (closed) { tts?.shutdown(); ready.completeExceptionally(IllegalStateException("رفيق متوقف.")); return }
-        val engine = tts
-        if (status != TextToSpeech.SUCCESS || engine == null) {
-            ready.completeExceptionally(IllegalStateException("تعذّر تشغيل الصوت. ثبّت محرّك تحويل النص لكلام يدعم العربية."))
-            return
-        }
-        try {
-            var language = engine.setLanguage(Locale.forLanguageTag("ar-EG"))
-            if (language < TextToSpeech.LANG_AVAILABLE) language = engine.setLanguage(Locale.forLanguageTag("ar"))
-            check(language >= TextToSpeech.LANG_AVAILABLE) {
-                "الصوت العربي غير مثبت. نزّل العربية من إعدادات تحويل النص إلى كلام في الموبايل."
-            }
-            engine.voices?.filter { it.locale.language == "ar" && !it.isNetworkConnectionRequired }
-                ?.sortedByDescending { it.locale.country == "EG" }
-                ?.firstOrNull()?.let { engine.voice = it }
-            engine.setAudioAttributes(AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            engine.setSpeechRate(0.92f)
-            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) {}
-                override fun onDone(id: String?) = finish(id, null)
-                @Deprecated("Android legacy callback")
-                override fun onError(id: String?) = finish(id, IllegalStateException("تعذّر نطق رد رفيق."))
-                override fun onError(id: String?, errorCode: Int) =
-                    finish(id, IllegalStateException("تعذّر نطق رد رفيق ($errorCode)."))
-                override fun onStop(id: String?, interrupted: Boolean) =
-                    finish(id, InterruptedException("تم إيقاف صوت رفيق."))
-            })
-            ready.complete(Unit)
-        } catch (error: Exception) { ready.completeExceptionally(error) }
-    }
-
-    private fun finish(id: String?, error: Exception?) {
-        val pending = synchronized(lock) { if (id == utteranceId) completion else null } ?: return
-        if (error == null) pending.complete(Unit) else pending.completeExceptionally(error)
-    }
-
-    /** Call off the main thread. */
     fun prepare() {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Prepare speech on a worker thread." }
-        try { ready.get(10, TimeUnit.SECONDS) }
-        catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
+        check(!closed) { "رفيق متوقف." }
     }
 
-    /** Completes after the actual utterance is finished, never merely after enqueueing. */
-    fun speak(text: String, isActive: () -> Boolean) {
+    fun speak(text: String, isActive: () -> Boolean, onPlaying: () -> Unit = {}) {
         prepare()
-        if (!isActive() || closed) return
-        val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            .setOnAudioFocusChangeListener({ change ->
-                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) cancel()
-            }, main).build()
-        check(audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            "تعذّر تشغيل الرد الصوتي دلوقتي. جرّب بعد المكالمة أو الصوت الحالي."
-        }
-        val id = UUID.randomUUID().toString()
-        val done = CompletableFuture<Unit>()
-        synchronized(lock) { utteranceId = id; completion = done }
-        main.post {
-            if (!isActive() || closed) {
-                done.completeExceptionally(InterruptedException("رفيق متوقف."))
-                return@post
-            }
-            if (tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) {
-                done.completeExceptionally(IllegalStateException("تعذّر تشغيل الرد الصوتي."))
-            }
-        }
+        val epoch = synchronized(lock) { generation }
+        fun active() = !closed && isActive() && synchronized(lock) { epoch == generation }
+        val audio = api.synthesize(text, ::active)
+        if (!active()) return
+        val file = File.createTempFile("habibi-reply-", ".wav", context.cacheDir)
+        val playback = Playback(file, CompletableFuture())
         try {
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(40)
-            while (!done.isDone) {
-                if (closed || !isActive()) { cancel(); return }
-                if (System.nanoTime() >= deadline) {
-                    cancel()
-                    error("الرد الصوتي اتأخر. راجع إعدادات تحويل النص إلى كلام.")
-                }
-                try { done.get(100, TimeUnit.MILLISECONDS) }
-                catch (_: java.util.concurrent.TimeoutException) {}
-            }
-            done.get()
-        } catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
-        finally {
-            audioManager.abandonAudioFocusRequest(focus)
+            file.outputStream().use { it.write(audio) }
             synchronized(lock) {
-                if (utteranceId == id) { utteranceId = null; completion = null }
+                if (!active()) return
+                check(current == null) { "رد صوتي آخر لسه شغال." }
+                current = playback
             }
+            main.post {
+                if (!active()) {
+                    playback.done.completeExceptionally(InterruptedException("تم إيقاف الرد."))
+                    release(playback)
+                    return@post
+                }
+                try {
+                    val attributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+                    val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(attributes)
+                        .setOnAudioFocusChangeListener({ change ->
+                            if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                                if (synchronized(lock) { current === playback }) cancel()
+                            }
+                        }, main).build()
+                    playback.focus = focus
+                    check(audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                        "تعذّر تشغيل الرد الصوتي دلوقتي. جرّب بعد المكالمة الحالية."
+                    }
+                    val player = MediaPlayer()
+                    playback.player = player
+                    player.setAudioAttributes(attributes)
+                    player.setDataSource(file.absolutePath)
+                    player.setOnPreparedListener {
+                        if (!playback.released && active()) { it.start(); onPlaying() }
+                        else playback.done.completeExceptionally(InterruptedException("تم إيقاف الرد."))
+                    }
+                    player.setOnCompletionListener { playback.done.complete(Unit) }
+                    player.setOnErrorListener { _, what, extra ->
+                        playback.done.completeExceptionally(IllegalStateException("تعذّر تشغيل صوت Habibi ($what/$extra)."))
+                        true
+                    }
+                    player.prepareAsync()
+                } catch (error: Exception) {
+                    playback.done.completeExceptionally(error)
+                }
+            }
+            try { playback.done.get(195, TimeUnit.SECONDS) }
+            catch (error: ExecutionException) { throw error.cause ?: error }
+        } finally {
+            main.post { release(playback) }
+            // Stop may have interrupted this worker. Still wait for player release
+            // before acknowledging that the microphone can be handed back.
+            val interrupted = Thread.interrupted()
+            try { playback.cleanup.get(5, TimeUnit.SECONDS) }
+            finally { if (interrupted) Thread.currentThread().interrupt() }
         }
+    }
+
+    /** Main thread only; idempotent across cancel, completion and late callbacks. */
+    private fun release(playback: Playback) {
+        if (playback.released) return
+        playback.released = true
+        try {
+            playback.player?.let { player ->
+                player.setOnPreparedListener(null)
+                player.setOnCompletionListener(null)
+                player.setOnErrorListener(null)
+                try { player.stop() } catch (_: Exception) {}
+                player.release()
+            }
+            playback.focus?.let { audioManager.abandonAudioFocusRequest(it) }
+            playback.file.delete()
+            synchronized(lock) { if (current === playback) current = null }
+            playback.cleanup.complete(Unit)
+        } catch (error: Exception) { playback.cleanup.completeExceptionally(error) }
     }
 
     fun cancel() {
-        synchronized(lock) { completion?.completeExceptionally(InterruptedException("تم إيقاف صوت رفيق.")) }
-        main.post { tts?.stop() }
+        val playback = synchronized(lock) { generation++; current }
+        api.cancelActiveRequest()
+        playback?.done?.completeExceptionally(InterruptedException("تم إيقاف رد رفيق."))
+        if (playback != null) {
+            if (Looper.myLooper() == Looper.getMainLooper()) release(playback)
+            else main.post { release(playback) }
+        }
     }
 
     override fun close() {
         closed = true
         cancel()
-        ready.completeExceptionally(InterruptedException("رفيق متوقف."))
-        main.post { tts?.shutdown(); tts = null }
     }
 }

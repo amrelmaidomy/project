@@ -2,6 +2,7 @@ package com.ma3ak.reminder.wakeword
 
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -95,6 +96,56 @@ class RafiqApiTest {
                 assertThrows("URL should be rejected: $url", IllegalArgumentException::class.java) { RafiqApi(url) }
             }
     }
+
+    @Test fun synthesizePostsTextAndReturnsExactPcmWav() {
+        val wav = pcmWav()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Content-Type", "audio/wav")
+                .setBody(okio.Buffer().write(wav)))
+            server.start()
+            RafiqApi(server.url("/").toString()).use { api ->
+                assertArrayEquals(wav, api.synthesize("أيوه، معاك"))
+            }
+            val request = checkNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+            assertEquals("/synthesize", request.path)
+            assertEquals("أيوه، معاك", JSONObject(request.body.readUtf8()).getString("text"))
+        }
+    }
+
+    @Test fun invalidSynthesisNeverBecomesPlayableAudio() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Content-Type", "audio/wav").setBody("invalid"))
+            server.start()
+            RafiqApi(server.url("/").toString()).use { api ->
+                assertThrows(IllegalStateException::class.java) { api.synthesize("معاك") }
+            }
+        }
+    }
+
+    @Test fun cancellingBlockedSynthesisDoesNotWaitForItsFiveMinuteTimeout() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            server.start()
+            RafiqApi(server.url("/").toString()).use { api ->
+                val ended = java.util.concurrent.CountDownLatch(1)
+                val worker = Thread {
+                    try { api.synthesize("معاك") } catch (_: Exception) {} finally { ended.countDown() }
+                }
+                worker.start()
+                checkNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+                api.cancelActiveRequest()
+                assertTrue("Cancelled request still blocks the microphone", ended.await(2, TimeUnit.SECONDS))
+                worker.join(1_000)
+            }
+        }
+    }
+
+    private fun pcmWav(): ByteArray = ByteBuffer.allocate(48).order(ByteOrder.LITTLE_ENDIAN).apply {
+        put("RIFF".toByteArray()).putInt(40).put("WAVEfmt ".toByteArray())
+        putInt(16).putShort(1).putShort(1).putInt(24_000).putInt(48_000)
+        putShort(2).putShort(16).put("data".toByteArray()).putInt(4)
+        putShort(1_000).putShort(-1_000)
+    }.array()
 
     private data class Reply(val status: Int = 200, val body: String, val location: String? = null)
 

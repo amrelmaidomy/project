@@ -57,6 +57,8 @@ fi
 
 cd "$MA3AK_ROOT/backend"
 uv sync --frozen --group dev
+uv sync --frozen --project "$MA3AK_ROOT/backend/tts_runtime" --python 3.12
+uv run --frozen python "$MA3AK_ROOT/scripts/prepare-models.py" --models-dir "${MA3AK_MODELS_DIR:-/workspace/shared/Ma3akModels}"
 cd "$MA3AK_ROOT/mobile"
 flutter --suppress-analytics pub get --enforce-lockfile
 if [[ ! -f "$MA3AK_ROOT/mobile/android/app/src/main/assets/wakeword/models.json" ]]; then

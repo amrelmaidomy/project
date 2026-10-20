@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
+from services.habibi_service import InvalidTtsTextError, TtsUnavailableError
 from services.whisper_service import (
     InvalidAudioError,
     SpeechUnavailableError,
@@ -44,10 +45,27 @@ class FakeSpeech:
         return "عندي دكتور بكرة الساعة خمسة"
 
 
+class FakeTts:
+    def __init__(self):
+        self.texts = []
+        self.error = None
+
+    def health(self):
+        return {"state": "not_loaded", "model": "Habibi-TTS/EGY", "device": "cpu"}
+
+    def synthesize(self, text):
+        self.texts.append(text)
+        if self.error:
+            raise self.error
+        return wav_bytes()
+
+
 @pytest.fixture
 def api():
     speech = FakeSpeech()
+    tts = FakeTts()
     main.app.dependency_overrides[main.get_speech_service] = lambda: speech
+    main.app.dependency_overrides[main.get_tts_service] = lambda: tts
     with TestClient(main.app) as client:
         yield client, speech
     main.app.dependency_overrides.clear()
@@ -60,6 +78,42 @@ def test_health_exposes_lazy_speech_state(api):
     assert response.json()["status"] == "ok"
     assert response.json()["speech"]["state"] == "not_loaded"
     assert speech.paths == []
+    assert response.json()["tts"]["state"] == "not_loaded"
+
+
+def test_synthesis_returns_wav_bytes_without_caching(api):
+    client, _ = api
+    response = client.post("/synthesize", json={"text": "  أيوه، معاك.  "})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.content == wav_bytes()
+    tts = main.app.dependency_overrides[main.get_tts_service]()
+    assert tts.texts == ["أيوه، معاك."]
+
+
+@pytest.mark.parametrize("text", ["", "   ", "x" * 601, None, 5])
+def test_invalid_tts_text_never_calls_model(api, text):
+    client, _ = api
+    assert client.post("/synthesize", json={"text": text}).status_code == 422
+    tts = main.app.dependency_overrides[main.get_tts_service]()
+    assert tts.texts == []
+
+
+@pytest.mark.parametrize(
+    "error,status",
+    [
+        (TtsUnavailableError("Habibi is not configured"), 503),
+        (InvalidTtsTextError("invalid text"), 422),
+    ],
+)
+def test_synthesis_failure_never_returns_fake_audio(api, error, status):
+    client, _ = api
+    tts = main.app.dependency_overrides[main.get_tts_service]()
+    tts.error = error
+    response = client.post("/synthesize", json={"text": "معاك"})
+    assert response.status_code == status
+    assert response.json()["detail"] == str(error)
 
 
 def test_parser_endpoint_contract(api):
@@ -201,6 +255,15 @@ def test_cuda_defaults_to_final_model(monkeypatch):
     settings = WhisperSettings.from_environment()
     assert settings.model == "large-v3-turbo"
     assert settings.compute_type == "float16"
+
+
+def test_cpu_defaults_to_turbo_with_int8(monkeypatch):
+    monkeypatch.setenv("WHISPER_DEVICE", "cpu")
+    monkeypatch.delenv("WHISPER_MODEL", raising=False)
+    monkeypatch.delenv("WHISPER_COMPUTE_TYPE", raising=False)
+    settings = WhisperSettings.from_environment()
+    assert settings.model == "large-v3-turbo"
+    assert settings.compute_type == "int8"
 
 
 def test_runtime_failure_updates_health_and_requires_restart(monkeypatch):

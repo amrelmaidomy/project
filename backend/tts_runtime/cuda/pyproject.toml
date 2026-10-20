@@ -1,0 +1,26 @@
+[project]
+name = "ma3ak-habibi-cuda-runtime"
+version = "0.1.0"
+description = "Optional CUDA Habibi Egyptian synthesis runtime for Ma3ak"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "habibi-tts==0.1.1",
+  "f5-tts==1.1.5",
+  "torch==2.8.0",
+  "torchaudio==2.8.0",
+  "transformers==4.46.3",
+  "gradio==5.35.0",
+  # Newer PyArrow releases require NumPy 2, while this F5 release needs NumPy 1.
+  "datasets==3.6.0",
+  "pyarrow==19.0.1",
+  "soundfile>=0.12,<1",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cuda" }
+torchaudio = { index = "pytorch-cuda" }
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

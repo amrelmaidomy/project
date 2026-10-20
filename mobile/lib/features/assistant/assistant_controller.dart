@@ -409,8 +409,16 @@ class AssistantController extends StateNotifier<ConversationState> {
     if (!_current(generation)) return;
     try {
       await _tts.speak(text);
-    } catch (_) {
-      // A missing Android Arabic voice does not block the visible conversation.
+    } catch (error) {
+      // Keep the text/reminder flow usable while making a failed Habibi reply
+      // visible instead of silently substituting a different voice engine.
+      if (_current(generation)) {
+        state = state.copyWith(
+          error: error is AppException
+              ? error.message
+              : 'تعذّر تشغيل الرد الصوتي. راجع خادم Habibi على اللاب.',
+        );
+      }
     }
   }
 
@@ -418,7 +426,7 @@ class AssistantController extends StateNotifier<ConversationState> {
     try {
       await _tts.stop();
     } catch (_) {
-      // Text input and recording remain usable without a device TTS engine.
+      // Cancellation still resets the visible conversation if audio has ended.
     }
   }
 

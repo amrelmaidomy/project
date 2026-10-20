@@ -21,7 +21,7 @@ class InvalidAudioError(ValueError):
 
 @dataclass(frozen=True)
 class WhisperSettings:
-    model: str = "small"
+    model: str = "large-v3-turbo"
     device: str = "cpu"
     compute_type: str = "int8"
     download_root: str | None = None
@@ -32,7 +32,7 @@ class WhisperSettings:
         if device not in {"cpu", "cuda"}:
             raise ValueError("WHISPER_DEVICE must be cpu or cuda")
         return cls(
-            model=os.getenv("WHISPER_MODEL", "large-v3-turbo" if device == "cuda" else "small"),
+            model=os.getenv("WHISPER_MODEL", "large-v3-turbo"),
             device=device,
             compute_type=os.getenv(
                 "WHISPER_COMPUTE_TYPE", "float16" if device == "cuda" else "int8"

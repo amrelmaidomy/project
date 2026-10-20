@@ -1,7 +1,18 @@
-# Backend — يا مساعد
+# Backend — معاك / رفيق
 
 FastAPI لفهم التذكيرات باللهجة المصرية، وتحويل تسجيل WAV إلى نص عربي باستخدام
 `faster-whisper` وSilero VAD. فهم التذكير بقواعد محددة دون LLM.
+
+## Habibi المصري
+
+`POST /synthesize` يحول JSON `{"text":"أيوه، معاك"}` إلى WAV من نموذج
+Habibi Specialized/EGY الحقيقي. الـruntime مستقل عن بيئة API لتجنب تعارض
+Torch/F5/Transformers مع خدمات الخادم. `/health` يعرض الحالة في `tts`؛
+`not_loaded` لا يثبت جاهزية التوليد. نقص الملفات أو runtime يرجع503.
+
+شغّل سكريبت الإعداد بدل تثبيت المكتبات الثقيلة في بيئة API؛ راجع
+[Windows وAndroid Studio](../docs/android-studio-windows.md) و
+[النماذج والعينة المرجعية](../docs/model-setup.md).
 
 ## التشغيل
 
@@ -12,6 +23,10 @@ uv sync --frozen --group dev
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+هذا الأمر يشغّل API بإعدادات shell فقط. لتشغيل الموديلين مع المسارات المحفوظة،
+جهّز البيئة والموديلات وفق الدليل ثم شغّل `bash scripts/start_backend.sh` من جذر
+المشروع، أو سكريبت `start-backend-windows.ps1` على Windows. بيئة Habibi تستخدم Python3.12.
+
 قيد `av>=11,<17` مقصود للتوافق مع `faster-whisper 1.2.1`:
 PyAV 19 أزال وسيط `metadata_errors` الذي يستخدمه فك ترميز التسجيلات.
 ملف القفل يثبت الإصدار الذي اختُبر (`av 16.1.0`).
@@ -19,7 +34,7 @@ PyAV 19 أزال وسيط `metadata_errors` الذي يستخدمه فك ترم�
 واجهة OpenAPI: `http://localhost:8000/docs`.
 `GET /health` و`POST /parse-reminder` يعملان دون تنزيل موديل صوت.
 تنزيل Whisper يحدث عند أول تسجيل صالح فقط؛ يحتفظ الجهاز بالموديل في cache.
-التشغيل الافتراضي CPU، موديل `small` و`int8`.
+التشغيل الافتراضي CPU، موديل `large-v3-turbo` و`int8`.
 
 للجهاز الذي يدعم CUDA مع مكتبات CTranslate2/CUDA المطلوبة:
 
@@ -33,7 +48,7 @@ WHISPER_DEVICE=cuda WHISPER_MODEL=large-v3-turbo WHISPER_COMPUTE_TYPE=float16 \
 | المتغير | الافتراضي | الاستخدام |
 | --- | --- | --- |
 | `WHISPER_DEVICE` | `cpu` | `cpu` أو `cuda` |
-| `WHISPER_MODEL` | `small` / `large-v3-turbo` مع CUDA | اسم موديل مدعوم أو مسار موديل محلي |
+| `WHISPER_MODEL` | `large-v3-turbo` | اسم موديل مدعوم أو مسار موديل محلي |
 | `WHISPER_COMPUTE_TYPE` | `int8` / `float16` مع CUDA | نوع حساب متوافق مع الجهاز |
 | `WHISPER_DOWNLOAD_ROOT` | cache المكتبة | مكان حفظ الموديلات |
 | `MAX_AUDIO_BYTES` | `10485760` | حد الملف: 10 MiB |
@@ -133,7 +148,14 @@ uv run ruff check .
 الفشل دون تنزيل موديل. دقة تحويل الصوت تحتاج تجربة تسجيلات عربية حقيقية على
 الجهاز المستهدف؛ راجع خطة التقييم في توثيق المشروع.
 
-### تجربة صوت فعلية — 19 أكتوبر 2026
+### تجربة الموديلين الحالية — 20 أكتوبر 2026
+
+تم تشغيل Whisper `large-v3-turbo` عبر HTTP على CPU/int8 بعينة مصرية حقيقية من
+حزمة Habibi؛ أعاد نصًا عربيًا مطابقًا للمعنى خلال8.56ثانية، تشمل التحميل الأول.
+Habibi المصري مع Vocos ولّد WAV فعليًا بالإعداد الأصلي32خطوة؛ أخذ201.85ثانية
+لجملة قصيرة على CPU. [القياسات وحدود الجودة](../docs/validation.md).
+
+### تجربة الإصدار السابق — 19 أكتوبر 2026
 
 تم تنزيل `small` وتشغيله فعليًا على CPU بنوع `int8`، مع
 `faster-whisper 1.2.1` و`av 16.1.0`. استخدمت تجربة HTTP عبر ASGI عينة

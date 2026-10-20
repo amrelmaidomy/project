@@ -10,10 +10,11 @@ internal class RafiqVoiceEngine(
     baseUrl: String,
     private val onStatus: (String, String) -> Unit,
     private val onFailure: (Exception) -> Unit,
+    private val onTranscript: (String) -> Unit = {},
 ) : AutoCloseable {
     private val audio = RafiqAudioCapture(context)
-    private val speech = RafiqSpeech(context)
     private val api = RafiqApi(baseUrl)
+    private val speech = RafiqSpeech(context, api)
     private val store = RafiqReminderStore(context)
     private val conversation = RafiqConversation(api) { draft ->
         check(running && !Thread.currentThread().isInterrupted) { "تم إيقاف المحادثة قبل الحفظ." }
@@ -36,7 +37,7 @@ internal class RafiqVoiceEngine(
         var failure: Exception? = null
         try {
             renewWakeLock()
-            onStatus("loading", "بجهّز الصوت والاتصال باللاب…")
+            onStatus("loading", "بجهّز الاتصال بـWhisper وHabibi على اللاب…")
             speech.prepare()
             var needsHealth = true
             var failedRequests = 0
@@ -74,6 +75,7 @@ internal class RafiqVoiceEngine(
                 val turn = try {
                     val text = api.transcribe(wav)
                     if (!running) break
+                    onTranscript(text)
                     if (wasAwaiting && responseDeadline != 0L && SystemClock.elapsedRealtime() >= responseDeadline) {
                         conversation.reset()
                         RafiqConversation.Turn("المحادثة انتهت من غير تأكيد. قول يا رفيق لو عايز تبدأ من جديد.",
@@ -119,8 +121,8 @@ internal class RafiqVoiceEngine(
 
     private fun reply(text: String) {
         if (!running) return
-        onStatus("speaking", text)
-        speech.speak(text) { running }
+        onStatus("synthesizing", "بجهّز الرد بصوت Habibi على اللاب…")
+        speech.speak(text, isActive = { running }, onPlaying = { onStatus("speaking", text) })
         responseDeadline = if (conversation.awaitingInput) SystemClock.elapsedRealtime() + 90_000L else 0L
         // Give speaker/room echo time to decay before reacquiring the microphone.
         if (running) Thread.sleep(350)

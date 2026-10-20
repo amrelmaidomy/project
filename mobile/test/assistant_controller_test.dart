@@ -160,13 +160,17 @@ void main() {
     },
   );
 
-  test('a missing local TTS voice still permits recording', () async {
-    tts.failSpeech = true;
-    await controller.startVoice();
-    expect(controller.state.phase, AssistantPhase.recording);
-    expect(calls, contains('record'));
-    await controller.cancel();
-  });
+  test(
+    'a failed Habibi reply is visible while recording remains usable',
+    () async {
+      tts.failSpeech = true;
+      await controller.startVoice();
+      expect(controller.state.phase, AssistantPhase.recording);
+      expect(calls, contains('record'));
+      expect(controller.state.error, contains('Habibi'));
+      await controller.cancel();
+    },
+  );
 
   test(
     'cancel blocks a new recording until an in-flight start is released',
@@ -397,7 +401,7 @@ class _Tts implements TtsService {
   @override
   Future<void> speak(String text) async {
     calls.add('say:$text');
-    if (failSpeech) throw StateError('No Arabic voice installed.');
+    if (failSpeech) throw const AppException('Habibi مش جاهز.');
     await speechGate?.future;
   }
 

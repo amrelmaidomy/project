@@ -492,7 +492,9 @@ class _WakeWordCardState extends ConsumerState<_WakeWordCard> {
                 const SizedBox(height: 8),
                 const Text(
                   'أثناء التشغيل، الميكروفون يلتقط الكلام القريب ويبعت المقاطع '
-                  'الصوتية لخادمك على اللاب. خلي الخادم شغّال وUSB متوصل. '
+                  'الصوتية لـWhisper على اللاب، والرد بيتولّد بصوت Habibi المصري. '
+                  'خلي الخادم شغّال. على المحاكي الاتصال مباشر، '
+                  'وعلى الموبايل استخدم ربط USB. '
                   'تقدر تروح للشاشة الرئيسية أو تقفل شاشة الموبايل؛ '
                   'الاستماع يفضل شغّال بإشعار دائم وزر إيقاف. '
                   'بعد إعادة تشغيل الهاتف أو الإيقاف الإجباري، فعّله من هنا تاني.',
@@ -501,6 +503,13 @@ class _WakeWordCardState extends ConsumerState<_WakeWordCard> {
                     height: 1.8,
                     color: Color(0xff607165),
                   ),
+                ),
+              ],
+              if (status.lastTranscript.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'آخر كلام سمعته: ${status.lastTranscript}',
+                  style: const TextStyle(fontSize: 12, height: 1.8),
                 ),
               ],
               const SizedBox(height: 10),

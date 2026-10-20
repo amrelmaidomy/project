@@ -12,6 +12,7 @@ __pycache__/
 .tooling/
 .dart_tool/
 .kotlin/
+.local/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages

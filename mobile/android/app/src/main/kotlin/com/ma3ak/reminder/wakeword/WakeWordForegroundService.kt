@@ -126,6 +126,9 @@ class WakeWordForegroundService : Service() {
             phrase = "يا رفيق"
             val generation = ++captureGeneration
             val created = RafiqVoiceEngine(this, baseUrl,
+                onTranscript = { text -> callback {
+                    if (enabled && generation == captureGeneration) WakeWordRuntime.publish(mapOf("type" to "status", "lastTranscript" to text))
+                } },
                 onStatus = { state, message -> callback {
                     if (enabled && generation == captureGeneration) update(state, message)
                 } },

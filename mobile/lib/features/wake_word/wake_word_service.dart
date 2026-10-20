@@ -26,6 +26,7 @@ class WakeWordStatus {
     this.message = 'شغّل «يا رفيق» علشان تسمع الرد وتضيف تذكير بصوتك.',
     this.pendingDetection = false,
     this.reminderRevision = 0,
+    this.lastTranscript = '',
   });
 
   final bool available;
@@ -37,6 +38,7 @@ class WakeWordStatus {
   final String message;
   final bool pendingDetection;
   final int reminderRevision;
+  final String lastTranscript;
 
   factory WakeWordStatus.fromMap(Map<Object?, Object?> data) => WakeWordStatus(
     available: data['available'] == true,
@@ -52,6 +54,9 @@ class WakeWordStatus {
     reminderRevision: data['reminderRevision'] is int
         ? data['reminderRevision']! as int
         : 0,
+    lastTranscript: data['lastTranscript'] is String
+        ? data['lastTranscript']! as String
+        : '',
   );
 }
 
